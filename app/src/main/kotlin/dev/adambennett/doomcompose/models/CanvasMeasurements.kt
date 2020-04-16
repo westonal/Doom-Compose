@@ -3,27 +3,23 @@ package dev.adambennett.doomcompose.models
 import kotlin.math.ceil
 
 data class CanvasMeasurements(
-    val width: Int,
-    val height: Int
-)
+    private val width: Int,
+    private val height: Int
+) {
+    private val size = 50
 
-val CanvasMeasurements.tallerThanWide: Boolean
-    get() = width < height
+    val tallerThanWide: Boolean = width < height
 
-val CanvasMeasurements.pixelSize: Int
-    get() {
-        val longestLength = if (tallerThanWide) width else height
-        return ceil(longestLength.toDouble() / 50).toInt()
-    }
+    private val pixelSize: Int =
+        ceil((if (tallerThanWide) width else height).toDouble() / size).toInt()
 
-val CanvasMeasurements.widthPixel: Int
-    get() = when {
-        tallerThanWide -> 50
+    val widthPixel: Int = when {
+        tallerThanWide -> size
         else -> ceil(width.toDouble() / pixelSize).toInt()
     }
 
-val CanvasMeasurements.heightPixel: Int
-    get() = when {
-        !tallerThanWide -> 50
+    val heightPixel: Int = when {
+        !tallerThanWide -> size
         else -> ceil(height.toDouble() / pixelSize).toInt()
     }
+}
