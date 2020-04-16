@@ -1,26 +1,23 @@
 package dev.adambennett.doomcompose
 
+import android.graphics.Bitmap
 import android.view.Choreographer
 import androidx.compose.Composable
 import androidx.compose.Model
 import androidx.compose.remember
 import androidx.ui.core.Modifier
 import androidx.ui.foundation.Canvas
-import androidx.ui.foundation.CanvasScope
-import androidx.ui.geometry.Rect
+import androidx.ui.geometry.Offset
 import androidx.ui.graphics.Paint
+import androidx.ui.graphics.asImageAsset
 import androidx.ui.layout.fillMaxSize
 import dev.adambennett.doomcompose.models.CanvasMeasurements
 import dev.adambennett.doomcompose.models.WindDirection
-import dev.adambennett.doomcompose.models.heightPixel
-import dev.adambennett.doomcompose.models.pixelSize
-import dev.adambennett.doomcompose.models.tallerThanWide
-import dev.adambennett.doomcompose.models.widthPixel
-import kotlin.math.floor
+import kotlin.math.max
 import kotlin.random.Random
 
 @Model
-data class DoomState(var pixels: List<Int> = emptyList())
+data class DoomState(var pixels: Bitmap? = null)
 
 @Composable
 fun DoomCompose(
@@ -50,40 +47,11 @@ fun DoomCanvas(
             measurements(canvasState)
         }
 
-        if (state.pixels.isNotEmpty()) {
-            renderFire(
-                paint,
-                state.pixels,
-                canvasState.heightPixel,
-                canvasState.widthPixel,
-                canvasState.pixelSize
-            )
-        }
-    }
-}
-
-private fun CanvasScope.renderFire(
-    paint: Paint,
-    firePixels: List<Int>,
-    heightPixels: Int,
-    widthPixels: Int,
-    pixelSize: Int
-) {
-    for (column in 0 until widthPixels) {
-        for (row in 0 until heightPixels - 1) {
-            drawRect(
-                rect = Rect(
-                    (column * pixelSize).toFloat(),
-                    (row * pixelSize).toFloat(),
-                    ((column + 1) * pixelSize).toFloat(),
-                    ((row + 1) * pixelSize).toFloat()
-                ),
-                paint = paint.apply {
-                    val currentPixelIndex = column + (widthPixels * row)
-                    val currentPixel = firePixels[currentPixelIndex]
-                    color = fireColors[currentPixel]
-                }
-            )
+        val pixels = state.pixels
+        if (pixels != null) {
+            val imageAsset = pixels.asImageAsset()
+            scale(size.width.value / pixels.width, size.height.value / pixels.height)
+            drawImage(imageAsset, Offset.zero, paint)
         }
     }
 }
@@ -93,15 +61,14 @@ private fun setupFireView(
     doomState: DoomState,
     windDirection: WindDirection = WindDirection.Left
 ) {
-    val arraySize = canvas.widthPixel * canvas.heightPixel
-
-    val pixelArray = IntArray(arraySize) { 0 }
-        .apply { createFireSource(this, canvas) }
+    val pixelArray =
+        Bitmap.createBitmap(canvas.widthPixel, canvas.heightPixel, Bitmap.Config.ARGB_8888)
+            .apply { createFireSource(this) }
 
     val callback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
             calculateFirePropagation(pixelArray, canvas, windDirection)
-            doomState.pixels = pixelArray.toList()
+            doomState.pixels = pixelArray
 
             Choreographer.getInstance().postFrameCallback(this)
         }
@@ -110,26 +77,31 @@ private fun setupFireView(
     Choreographer.getInstance().postFrameCallback(callback)
 }
 
-private fun createFireSource(firePixels: IntArray, canvas: CanvasMeasurements) {
-    val overFlowFireIndex = canvas.widthPixel * canvas.heightPixel
-
-    for (column in 0 until canvas.widthPixel) {
-        val pixelIndex = (overFlowFireIndex - canvas.widthPixel) + column
-        firePixels[pixelIndex] = fireColors.size - 1
+private fun createFireSource(firePixels: Bitmap) {
+    android.graphics.Canvas(firePixels).apply {
+        drawColor(fireColors.bottomColor)
+        drawLine(0f,
+            (firePixels.height - 1).toFloat(),
+            firePixels.width.toFloat(),
+            (firePixels.height - 1).toFloat(),
+            android.graphics.Paint().apply { color = fireColors.topColor }
+        )
     }
 }
 
 private fun calculateFirePropagation(
-    firePixels: IntArray,
+    firePixels: Bitmap,
     canvasMeasurements: CanvasMeasurements,
     windDirection: WindDirection
 ) {
-    for (column in 0 until canvasMeasurements.widthPixel) {
-        for (row in 1 until canvasMeasurements.heightPixel) {
-            val currentPixelIndex = column + (canvasMeasurements.widthPixel * row)
+    val limit = fireColors.size * 2
+    for (x in 0 until firePixels.width) {
+        for (y in max(0, firePixels.height - limit) until firePixels.height - 1) {
+            val currentPixelIndex = x + (canvasMeasurements.widthPixel * y)
             updateFireIntensityPerPixel(
                 currentPixelIndex,
                 firePixels,
+                x, y,
                 canvasMeasurements,
                 windDirection
             )
@@ -139,20 +111,15 @@ private fun calculateFirePropagation(
 
 private fun updateFireIntensityPerPixel(
     currentPixelIndex: Int,
-    firePixels: IntArray,
+    firePixels: Bitmap,
+    x: Int, y: Int,
     measurements: CanvasMeasurements,
     windDirection: WindDirection
 ) {
-    val bellowPixelIndex = currentPixelIndex + measurements.widthPixel
-    if (bellowPixelIndex >= measurements.widthPixel * measurements.heightPixel) return
-
     val offset = if (measurements.tallerThanWide) 2 else 3
-    val decay = floor(Random.nextDouble() * offset).toInt()
-    val bellowPixelFireIntensity = firePixels[bellowPixelIndex]
-    val newFireIntensity = when {
-        bellowPixelFireIntensity - decay >= 0 -> bellowPixelFireIntensity - decay
-        else -> 0
-    }
+    val decay = Random.nextInt(offset)
+    val bellowPixelFireIntensity = fireColors.index(firePixels.getPixel(x, y + 1))
+    val newFireIntensity = max(bellowPixelFireIntensity - decay, 0)
 
     val newPosition = when (windDirection) {
         WindDirection.Right -> if (currentPixelIndex - decay >= 0) currentPixelIndex - decay else currentPixelIndex
@@ -160,7 +127,12 @@ private fun updateFireIntensityPerPixel(
         WindDirection.None -> currentPixelIndex
     }
 
-    firePixels[newPosition] = newFireIntensity
+    firePixels.setPixel(
+        newPosition % measurements.widthPixel,
+        newPosition / measurements.widthPixel,
+        fireColors.color(newFireIntensity)
+    )
 }
+
 
 
